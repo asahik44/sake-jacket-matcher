@@ -1,0 +1,15 @@
+# Pythonの仮想環境を無視
+venv/
+.venv/
+env/
+
+# Macの不要なファイルを無視
+.DS_Store
+
+# Pythonのキャッシュファイルを無視
+__pycache__/
+*.pyc
+
+# 巨大なモデルフォルダも念のため無視（バックアップ済みならOK）
+my_genre_model/
+my_intent_model/

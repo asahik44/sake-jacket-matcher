@@ -1,0 +1,12 @@
+streamlit
+numpy
+pandas
+torch
+transformers
+sentence-transformers
+scikit-learn
+requests
+Pillow
+tqdm
+fugashi
+ipadic
