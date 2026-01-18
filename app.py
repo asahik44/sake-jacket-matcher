@@ -177,7 +177,8 @@ def search_engine(query, selected_genres, min_p, max_p, mode="visual"):
 
     elif mode == "visual" or not models["has_logic_model"]:
         search_genres = [] 
-        ai_message = "Free Vibe: ジャケットの雰囲気だけで全ジャンルから探します"
+        ai_message = ""
+        # 元メッセージ ai_message = "Free Vibe: ジャケットの雰囲気だけで全ジャンルから探します"
 
     query_vec = models["clip"].encode(query, convert_to_tensor=True).cpu().numpy()
     
