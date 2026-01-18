@@ -47,30 +47,26 @@ inject_ga()
 
 st.markdown("""
 <style>
-    /* 1. 邪魔な装飾（虹色の線）を消す */
-    div[data-testid="stDecoration"] {
-        visibility: hidden;
-        display: none;
+    /* 1. ヘッダー（上のバー）は「表示」させる！ */
+    /* ここを消すとフィルターボタン（＞）が押せなくなる */
+    header {
+        visibility: visible !important;
+        background-color: transparent !important; /* 背景を透明にして圧迫感を減らす */
     }
     
-    /* 2. 右上のメニュー（Deployボタンとか）だけ消す */
-    div[data-testid="stToolbar"] {
-        visibility: hidden;
-        display: none;
-    }
-    
-    /* 3. フッター（Built with Streamlit）を消す */
+    /* 2. フッター（Built with Streamlit）だけ消す */
     footer {
         visibility: hidden;
         display: none;
     }
-
-    /* 4. 余白の調整（ヘッダーが残る分、少し上に詰める） */
-    .block-container {
-        padding-top: 1rem;
+    
+    /* 3. 虹色の線だけ消す */
+    div[data-testid="stDecoration"] {
+        visibility: hidden;
+        display: none;
     }
 
-    /* 画像サイズの調整（既存コード） */
+    /* 4. 画像サイズの調整（既存） */
     div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
 </style>
 """, unsafe_allow_html=True)
