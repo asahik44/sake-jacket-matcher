@@ -8,12 +8,14 @@ from transformers import BertTokenizer, BertForSequenceClassification
 import torch.nn.functional as F
 import os
 import traceback
+import gc # ★メモリ掃除用
 
 # ==========================================
 # ★設定エリア
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
+APP_VERSION = "ver 0.2.1" # ★バージョン管理
 
 GENRE_ORDER = [
     "ビール", "海外ビール", "地ビール・クラフトビール",
@@ -24,6 +26,9 @@ GENRE_ORDER = [
 ]
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
+
+# ★ バージョン表示（サイドバーの一番下にも表示させます）
+st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 def inject_ga():
     try:
@@ -47,7 +52,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- モデル読み込み (★ここを高速化！) ---
+# --- モデル読み込み (★メモリ最適化版) ---
 @st.cache_resource
 def load_all_models():
     try:
@@ -58,13 +63,17 @@ def load_all_models():
         return None
 
     try:
+        # CLIPモデル読み込み
         clip_model = SentenceTransformer('sentence-transformers/clip-ViT-B-32-multilingual-v1')
         
-        # ★★★ 高速化ポイント ★★★
-        # ここで最初に「PyTorchのTensor（計算しやすい形）」に変換しておく！
-        # これで検索のたびに変換する必要がなくなります。
+        # ★メモリ節約ポイント1: 中間データをすぐに消す
+        # リスト内包表記で直接配列を作り、すぐにTensor化する
         raw_vectors = np.concatenate([item['vector'] for item in db_data], axis=0)
         all_vectors_tensor = torch.tensor(raw_vectors).float().cpu()
+        
+        # 不要になった numpy 配列を削除
+        del raw_vectors
+        gc.collect() # ★強制ゴミ掃除
         
     except Exception as e:
         st.error(f"CLIPモデル読み込みエラー: {e}")
@@ -73,6 +82,7 @@ def load_all_models():
     raw_genres = list(set([item.get('genre', 'その他') for item in db_data]))
     sorted_genres = sorted(raw_genres, key=lambda x: GENRE_ORDER.index(x) if x in GENRE_ORDER else 999)
 
+    # カスタムモデル読み込み
     intent_tk, intent_md, genre_tk, genre_md = None, None, None, None
     has_logic_model = False
     try:
@@ -85,10 +95,11 @@ def load_all_models():
     except Exception:
         pass 
 
-    return {
+    # 戻り値の辞書作成
+    result = {
         "db": db_data,
         "clip": clip_model,
-        "vectors": all_vectors_tensor, # ★Tensorを渡す
+        "vectors": all_vectors_tensor,
         "genres": sorted_genres,
         "intent_tk": intent_tk, 
         "intent_md": intent_md, 
@@ -96,6 +107,10 @@ def load_all_models():
         "genre_md": genre_md, 
         "has_logic_model": has_logic_model
     }
+    
+    # ★最後にもう一度掃除
+    gc.collect()
+    return result
 
 models = load_all_models()
 if not models: st.stop()
@@ -115,14 +130,12 @@ def predict_genre_probs(text):
     probs = F.softmax(outputs.logits, dim=-1)[0]
     return {models["genre_md"].config.id2label[i]: prob.item() for i, prob in enumerate(probs)}
 
-# MMRロジック (軽量化)
+# MMRロジック
 def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, diversity=0.4):
     try:
-        # クエリだけTensor化（候補はすでにTensorなので変換不要）
         query_tensor = torch.tensor(query_vec).float().cpu()
         if query_tensor.dim() == 1: query_tensor = query_tensor.unsqueeze(0)
         
-        # ★ 計算 (candidate_vectors_tensor はすでにTensor)
         sims_to_query = util.cos_sim(query_tensor, candidate_vectors_tensor)[0]
         
         selected_indices = []
@@ -138,7 +151,6 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
             for idx in candidate_indices:
                 similarity_to_query = sims_to_query[idx].item()
                 if selected_indices:
-                    # ここもTensor同士の計算なので高速
                     selected_vecs = candidate_vectors_tensor[selected_indices]
                     current_vec = candidate_vectors_tensor[idx].unsqueeze(0)
                     sim_to_selected = util.cos_sim(current_vec, selected_vecs)
@@ -158,13 +170,13 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
         st.error(f"MMR Error: {e}")
         return [], []
 
-# --- 検索エンジン本体 (高速化版) ---
+# --- 検索エンジン本体 ---
 def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", logic_mode="A"):
     ai_message = ""
     search_genres = []
     
-    # 実況はDEBUG_MODEの時だけ控えめに出す
-    if DEBUG_MODE: st.write("🏃‍♂️ [STEP 1] 検索開始")
+    # デバッグ表示（軽量化のためコメントアウト推奨だが検証中は残す）
+    if DEBUG_MODE: st.caption(f"Debug: Search started... {logic_mode}")
     
     try:
         if mode == "visual" and ("C" in logic_mode or "D" in logic_mode):
@@ -175,7 +187,6 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if selected_genres:
             search_genres = selected_genres
         elif mode == "logic" and models["has_logic_model"]:
-            # (省略) Logic部分...
             target_genres = []
             for broad_key, children in BROAD_CATEGORIES.items():
                 if broad_key in original_query: target_genres.extend(children)
@@ -215,34 +226,23 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if not valid_indices: 
             return [], ai_message
         
-        # ★★★ 高速化ポイント ★★★
-        # 毎回 torch.tensor() するのをやめました。
-        # すでにTensorになっている models["vectors"] からスライスするだけ。一瞬です。
         target_vectors_tensor = models["vectors"][valid_indices]
         candidate_items = [models["db"][i] for i in valid_indices]
 
-        if DEBUG_MODE: st.write(f"🏃‍♂️ [STEP 4] 計算開始 Mode: {logic_mode}")
-
+        # ランキング計算
         if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
             results, raw_scores = mmr_sort(query_vec, target_vectors_tensor, candidate_items, top_k=12, diversity=0.4)
         else:
-            # Baseline (高速化済み)
             q_tensor = torch.tensor(query_vec).float().cpu()
-            
-            # target_vectors_tensor はすでにTensorなので変換不要！
             scores = util.cos_sim(q_tensor, target_vectors_tensor)
             scores = scores[0] 
-            
             sorted_args = torch.argsort(scores, descending=True)
-            
             results = []
             raw_scores = []
             for i in range(min(12, len(sorted_args))):
                 idx = sorted_args[i].item()
                 results.append(candidate_items[idx])
                 raw_scores.append(scores[idx].item())
-
-        if DEBUG_MODE: st.write("🏃‍♂️ [STEP 5] 完了")
 
         final_results = []
         for item, raw_score in zip(results, raw_scores):
@@ -253,12 +253,14 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         return final_results, ai_message
 
     except Exception as e:
-        st.error(f"🚨 システムエラー発生: {e}")
+        st.error(f"🚨 システムエラー: {e}")
         st.code(traceback.format_exc())
         return [], "システムエラー"
 
 # --- UI構築 ---
 st.title(f"🍾 {APP_TITLE}")
+st.caption(f"Updated: {APP_VERSION}") # ★タイトル直下にもバージョン表示
+
 st.sidebar.header("Search Mode")
 
 if models["has_logic_model"]:
@@ -276,6 +278,7 @@ price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="
 st.sidebar.divider()
 st.sidebar.markdown("### 🧪 開発者メニュー")
 logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=0)
+
 if DEBUG_MODE: st.sidebar.warning("🔧 デバッグモード ON")
 
 col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
@@ -298,13 +301,10 @@ if query or search_btn:
                 with st.container(height=450, border=True): 
                     if item.get('image_url'): st.image(item['image_url'], use_container_width=True)
                     else: st.text("No Image")
-                    
-                    # Score表示 (Visualモードのみ)
                     if mode_key == "visual":
                         st.progress(item['match_score'], text=f"Match: {int(item['match_score']*100)}%")
-                    
                     st.write(f"**{item['name'][:30]}**")
                     st.link_button("楽天で見る ➤", item['url'], use_container_width=True)
     else:
         if message != "システムエラー":
-            st.warning("⚠️ 結果が見つかりませんでした (Not Found)")
+            st.warning("⚠️ 結果が見つかりませんでした")
