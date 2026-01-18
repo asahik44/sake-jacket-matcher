@@ -15,7 +15,8 @@ import gc # ★メモリ掃除用
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 0.2.1" # ★バージョン管理
+APP_VERSION = "ver 0.2.2" # ★バージョン管理
+USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
     "ビール", "海外ビール", "地ビール・クラフトビール",
@@ -81,6 +82,18 @@ def load_all_models():
     
     raw_genres = list(set([item.get('genre', 'その他') for item in db_data]))
     sorted_genres = sorted(raw_genres, key=lambda x: GENRE_ORDER.index(x) if x in GENRE_ORDER else 999)
+
+    # ★スイッチがオンの時だけ重いモデルを読み込む
+    if USE_LOGIC_MODEL: 
+        try:
+            if os.path.exists("./my_intent_model") and os.path.exists("./my_genre_model"):
+                intent_tk = BertTokenizer.from_pretrained("./my_intent_model")
+                intent_md = BertForSequenceClassification.from_pretrained("./my_intent_model")
+                genre_tk = BertTokenizer.from_pretrained("./my_genre_model")
+                genre_md = BertForSequenceClassification.from_pretrained("./my_genre_model")
+                has_logic_model = True
+        except Exception:
+            pass
 
     # カスタムモデル読み込み
     intent_tk, intent_md, genre_tk, genre_md = None, None, None, None
