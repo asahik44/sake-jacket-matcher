@@ -47,15 +47,31 @@ inject_ga()
 
 st.markdown("""
 <style>
-    /* 画像サイズの調整 */
-    div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
-        
-    /* ★ハンバーガーメニューとフッターだけ隠す */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* 1. 邪魔な装飾（虹色の線）を消す */
+    div[data-testid="stDecoration"] {
+        visibility: hidden;
+        display: none;
+    }
     
-    /* ヘッダー隠す */
-    /* header {visibility: hidden;} */
+    /* 2. 右上のメニュー（Deployボタンとか）だけ消す */
+    div[data-testid="stToolbar"] {
+        visibility: hidden;
+        display: none;
+    }
+    
+    /* 3. フッター（Built with Streamlit）を消す */
+    footer {
+        visibility: hidden;
+        display: none;
+    }
+
+    /* 4. 余白の調整（ヘッダーが残る分、少し上に詰める） */
+    .block-container {
+        padding-top: 1rem;
+    }
+
+    /* 画像サイズの調整（既存コード） */
+    div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
