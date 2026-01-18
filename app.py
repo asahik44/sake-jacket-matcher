@@ -50,10 +50,12 @@ st.markdown("""
     /* 画像サイズの調整 */
     div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
         
-    /* ★ハンバーガーメニューとフッターを隠す */
+    /* ★ハンバーガーメニューとフッターだけ隠す */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    
+    /* ヘッダー隠す */
+    /* header {visibility: hidden;} */
 </style>
 """, unsafe_allow_html=True)
 
@@ -142,6 +144,7 @@ def predict_genre_probs(text):
 # 検索エンジン
 def search_engine(query, selected_genres, min_p, max_p, mode="visual"):
     ai_message = ""
+    # 元のコード: ai_message = "Free Vibe: ジャケットの雰囲気だけで全ジャンルから探します"
     search_genres = []
     
     if selected_genres:
