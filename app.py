@@ -210,7 +210,6 @@ if models["has_logic_model"]:
     mode_options = ("ジャケ買い (感性)", "AIソムリエ (知識)")
 else:
     mode_options = ("ジャケ買い (感性)",) # モデルがないときはこれ一択
-    st.sidebar.caption("※現在、軽量版(Visual Only)で動作中")
 
 mode_select = st.sidebar.radio("検索モード", mode_options, index=0)
 mode_key = "visual" if "ジャケ買い" in mode_select else "logic"
@@ -218,14 +217,14 @@ mode_key = "visual" if "ジャケ買い" in mode_select else "logic"
 st.sidebar.divider()
 st.sidebar.header("Filters")
 user_genres = st.sidebar.multiselect("ジャンル固定", options=models["genres"])
-price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500)
+price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="¥%d")
 
 if DEBUG_MODE: st.sidebar.warning("🔧 デバッグモード ON")
 
 # メインエリア
 col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 with col1:
-    placeholder = "例：サバゲー後、元カノ、サイバーパンクな夜..." if mode_key == "visual" else "例：魚料理に合うワイン、BBQ..."
+    placeholder = "例：サイバーパンクな夜、森の中で読書、初恋の味..." if mode_key == "visual" else "例：魚料理に合うワイン、BBQ..."
     query = st.text_input("どんな雰囲気のお酒がいい？", placeholder=placeholder).strip()
 with col2:
     search_btn = st.button("Digる", type="primary", use_container_width=True)
