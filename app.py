@@ -12,16 +12,17 @@ import os # ファイル存在確認用
 # ★Google Analytics設定
 # ==========================================
 def inject_ga():
-    GA_ID = "G-1EPHSK2EX7" 
-    ga_code = f"""
-    <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-        function gtag(){{dataLayer.push(arguments);}}
-        gtag('js', new Date());
-        gtag('config', '{GA_ID}');
-    </script>
-    """
+    Gif "GA_ID" in st.secrets:
+        GA_ID = st.secrets["GA_ID"]
+        ga_code = f"""
+        <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+        <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){{dataLayer.push(arguments);}}
+            gtag('js', new Date());
+            gtag('config', '{GA_ID}');
+        </script>
+        """
     components.html(ga_code, height=0)
 
 # ==========================================
