@@ -10,9 +10,9 @@ import os
 
 # ==========================================
 # ★Google Analytics設定
-# ==========================================F
+# ==========================================
 def inject_ga():
-    Gif "GA_ID" in st.secrets:
+    if "GA_ID" in st.secrets:
         GA_ID = st.secrets["GA_ID"]
         ga_code = f"""
         <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
@@ -23,7 +23,7 @@ def inject_ga():
             gtag('config', '{GA_ID}');
         </script>
         """
-    components.html(ga_code, height=0)
+        components.html(ga_code, height=0)
 
 # ==========================================
 # ★設定エリア
