@@ -6,29 +6,14 @@ import torch
 from sentence_transformers import SentenceTransformer, util
 from transformers import BertTokenizer, BertForSequenceClassification
 import torch.nn.functional as F
-import os 
-
-# ==========================================
-# ★Google Analytics設定
-# ==========================================
-def inject_ga():
-    if "GA_ID" in st.secrets:
-        GA_ID = st.secrets["GA_ID"]
-        ga_code = f"""
-        <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
-        <script>
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){{dataLayer.push(arguments);}}
-            gtag('js', new Date());
-            gtag('config', '{GA_ID}');
-        </script>
-        """
-        components.html(ga_code, height=0)
+import os
+import traceback # エラー詳細表示用
 
 # ==========================================
 # ★設定エリア
 # ==========================================
-DEBUG_MODE = False  # Trueにすると裏側のスコアなどが見えます
+# 検証中は True にしておきます（エラーが画面に出るようになります）
+DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
 
 GENRE_ORDER = [
@@ -40,16 +25,34 @@ GENRE_ORDER = [
 ]
 
 # ==========================================
-# アプリ設定
+# アプリ設定 & GAタグ
 # ==========================================
 st.set_page_config(page_title=APP_TITLE, layout="wide")
+
+def inject_ga():
+    # ローカル環境などで secrets がなくてもエラーにならないように対策
+    try:
+        if "GA_ID" in st.secrets:
+            GA_ID = st.secrets["GA_ID"]
+            ga_code = f"""
+            <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+            <script>
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){{dataLayer.push(arguments);}}
+                gtag('js', new Date());
+                gtag('config', '{GA_ID}');
+            </script>
+            """
+            components.html(ga_code, height=0)
+    except Exception:
+        pass
+
 inject_ga()
 
 # ★フィルタボタンを残しつつ白枠を消すCSS
 st.markdown("""
 <style>
     /* 1. ヘッダー（上のバー）は「表示」させる！ */
-    /* これがないとフィルターボタン（＞）が消えてしまいます */
     header {
         visibility: visible !important;
         background-color: transparent !important;
@@ -67,7 +70,7 @@ st.markdown("""
         display: none;
     }
 
-    /* 4. Streamlit Cloud特有の「白枠（ViewerBadge）」を強制的に消す */
+    /* 4. Streamlit Cloud特有の「白枠」を消す */
     div[class*="viewerBadge"] {
         visibility: hidden !important;
         display: none !important;
@@ -92,10 +95,10 @@ BROAD_CATEGORIES = {
     "日本酒": ["日本酒"],
 }
 
-# --- モデル読み込み (頑丈版) ---
+# --- モデル読み込み ---
 @st.cache_resource
 def load_all_models():
-    # 1. データベース読み込み (必須)
+    # 1. データベース読み込み
     try:
         with open('sake_database.pkl', 'rb') as f:
             db_data = pickle.load(f)
@@ -103,7 +106,7 @@ def load_all_models():
         st.error("データベース(sake_database.pkl)が見つかりません。")
         return None
 
-    # 2. CLIPモデル読み込み (必須・自動DL)
+    # 2. CLIPモデル読み込み
     try:
         clip_model = SentenceTransformer('sentence-transformers/clip-ViT-B-32-multilingual-v1')
         all_vectors = np.concatenate([item['vector'] for item in db_data], axis=0)
@@ -115,7 +118,7 @@ def load_all_models():
     raw_genres = list(set([item.get('genre', 'その他') for item in db_data]))
     sorted_genres = sorted(raw_genres, key=lambda x: GENRE_ORDER.index(x) if x in GENRE_ORDER else 999)
 
-    # 3. カスタムモデル読み込み (任意: なければスキップ)
+    # 3. カスタムモデル読み込み (任意)
     intent_tk, intent_md, genre_tk, genre_md = None, None, None, None
     has_logic_model = False
 
@@ -130,7 +133,7 @@ def load_all_models():
             genre_md = BertForSequenceClassification.from_pretrained(genre_path)
             has_logic_model = True
     except Exception:
-        pass # モデルがない場合は無視して進む
+        pass 
 
     return {
         "db": db_data,
@@ -150,7 +153,6 @@ if not models:
 
 # --- アルゴリズム関数 ---
 
-# Intent / Genre 推論
 def predict_intent(text):
     if not models["has_logic_model"]: return False, 0.0
     inputs = models["intent_tk"](text, return_tensors="pt", padding=True, truncation=True, max_length=64)
@@ -165,24 +167,25 @@ def predict_genre_probs(text):
     probs = F.softmax(outputs.logits, dim=-1)[0]
     return {models["genre_md"].config.id2label[i]: prob.item() for i, prob in enumerate(probs)}
 
-# MMR (Maximal Marginal Relevance) 並び替えロジック
+# ★ MMR並び替えロジック (頑丈版)
 def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=0.4):
     """
-    diversity: 0に近いほど類似度重視（今まで通り）、1に近いほど多様性重視（バラバラになる）
-    推奨値: 0.3 ~ 0.5
+    diversity: 0に近いほど類似度重視、1に近いほど多様性重視
     """
-    # クエリとの類似度計算
-    # candidate_vectorsはnumpy配列なのでtorch tensorに変換して計算
-    cand_tensor = torch.tensor(candidate_vectors)
-    query_tensor = torch.tensor(query_vec).unsqueeze(0)
+    # ★強制的にfloat32型・CPU・Tensorに変換してエラーを防ぐ
+    query_tensor = torch.tensor(query_vec).float().cpu()
+    # 1次元配列なら2次元(1, 512)にする
+    if query_tensor.dim() == 1:
+        query_tensor = query_tensor.unsqueeze(0)
+        
+    cand_tensor = torch.tensor(candidate_vectors).float().cpu()
     
+    # 類似度計算
     sims_to_query = util.cos_sim(query_tensor, cand_tensor)[0]
     
-    # MMRによる選抜ループ
     selected_indices = []
     candidate_indices = list(range(len(candidate_items)))
     
-    # 候補が少なすぎる場合は単純ソートで返す
     if len(candidate_items) <= top_k:
         sorted_indices = torch.argsort(sims_to_query, descending=True).tolist()
         return [candidate_items[i] for i in sorted_indices], [sims_to_query[i].item() for i in sorted_indices]
@@ -192,12 +195,9 @@ def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=
         best_idx = -1
         
         for idx in candidate_indices:
-            # クエリとの類似度
             similarity_to_query = sims_to_query[idx].item()
             
-            # すでに選んだものとの類似度（最大値）
             if selected_indices:
-                # 選ばれたアイテムのベクトルを取得
                 selected_vecs = cand_tensor[selected_indices]
                 current_vec = cand_tensor[idx].unsqueeze(0)
                 sim_to_selected = util.cos_sim(current_vec, selected_vecs)
@@ -205,7 +205,6 @@ def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=
             else:
                 max_similarity_to_selected = 0
             
-            # MMRスコア = (1-λ)*クエリ類似度 - λ*選定済みとの類似度
             mmr_score = (1 - diversity) * similarity_to_query - diversity * max_similarity_to_selected
             
             if mmr_score > best_mmr_score:
@@ -215,100 +214,108 @@ def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=
         selected_indices.append(best_idx)
         candidate_indices.remove(best_idx)
     
-    # 結果の構築
     results = [candidate_items[i] for i in selected_indices]
     result_scores = [sims_to_query[i].item() for i in selected_indices]
     
     return results, result_scores
 
-# --- 検索エンジン本体 ---
+# --- 検索エンジン本体 (診断機能・エラー表示付き) ---
 def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", logic_mode="A"):
     ai_message = ""
     search_genres = []
     
-    # ★ プロンプトエンジニアリング (検証用 C/Dモード)
-    # クエリを加工して「お酒の見た目を探している」ことを強調する
-    if mode == "visual" and ("C" in logic_mode or "D" in logic_mode):
-        # 日本語と英語を混ぜてCLIPに伝わりやすくするテクニック
-        query_for_clip = f"「{original_query}」という雰囲気の、お酒のボトルデザイン。 Package design of sake bottle with the vibe of {original_query}."
-        if DEBUG_MODE: st.toast(f"Modified Query: {query_for_clip}")
-    else:
-        query_for_clip = original_query
-
-    # ジャンル絞り込みロジック
-    if selected_genres:
-        search_genres = selected_genres
-    elif mode == "logic" and models["has_logic_model"]:
-        # (既存のLogicモード処理...)
-        target_genres = []
-        for broad_key, children in BROAD_CATEGORIES.items():
-            if broad_key in original_query: target_genres.extend(children)
-        for g in models["genres"]:
-            if g in original_query and g not in target_genres: target_genres.append(g)
-        
-        if target_genres:
-            search_genres = list(set(target_genres))
-            ai_message = "キーワードからジャンルを絞り込みました"
+    try:
+        # 1. プロンプトエンジニアリング (C, D)
+        if mode == "visual" and ("C" in logic_mode or "D" in logic_mode):
+            query_for_clip = f"「{original_query}」という雰囲気のお酒のボトルデザイン。 Package design of sake bottle with the vibe of {original_query}."
         else:
-            is_nonal, nonal_conf = predict_intent(original_query)
-            if is_nonal:
-                search_genres = ["ノンアルコール"]
-                ai_message = "ノンアルコール商品から探します"
+            query_for_clip = original_query
+
+        # 2. ジャンル絞り込み
+        if selected_genres:
+            search_genres = selected_genres
+        elif mode == "logic" and models["has_logic_model"]:
+            target_genres = []
+            for broad_key, children in BROAD_CATEGORIES.items():
+                if broad_key in original_query: target_genres.extend(children)
+            for g in models["genres"]:
+                if g in original_query and g not in target_genres: target_genres.append(g)
+            
+            if target_genres:
+                search_genres = list(set(target_genres))
+                ai_message = "キーワードからジャンルを絞り込みました"
             else:
-                genre_probs = predict_genre_probs(original_query)
-                sorted_genres = sorted(genre_probs.items(), key=lambda x: x[1], reverse=True)
-                candidates = [sorted_genres[0][0]]
-                for g, p in sorted_genres[1:]:
-                    if p > 0.15: candidates.append(g)
-                search_genres = candidates
-                ai_message = f"AI推論: {search_genres[0]} などが合いそうです"
+                is_nonal, nonal_conf = predict_intent(original_query)
+                if is_nonal:
+                    search_genres = ["ノンアルコール"]
+                    ai_message = "ノンアルコール商品から探します"
+                else:
+                    genre_probs = predict_genre_probs(original_query)
+                    sorted_genres = sorted(genre_probs.items(), key=lambda x: x[1], reverse=True)
+                    candidates = [sorted_genres[0][0]]
+                    for g, p in sorted_genres[1:]:
+                        if p > 0.15: candidates.append(g)
+                    search_genres = candidates
+                    ai_message = f"AI推論: {search_genres[0]} などが合いそうです"
 
-    elif mode == "visual" or not models["has_logic_model"]:
-        search_genres = [] 
-        ai_message = ""
+        elif mode == "visual" or not models["has_logic_model"]:
+            search_genres = [] 
+            ai_message = ""
 
-    # ベクトル化
-    query_vec = models["clip"].encode(query_for_clip, convert_to_tensor=True).cpu().numpy()
-    
-    # フィルタリング
-    valid_indices = []
-    for i, item in enumerate(models["db"]):
-        if search_genres and item.get('genre') not in search_genres: continue
-        if not (min_p <= item['price'] <= max_p): continue
-        valid_indices.append(i)
+        # 3. ベクトル化 (★float32に強制変換)
+        query_vec = models["clip"].encode(query_for_clip, convert_to_tensor=True).float().cpu().numpy()
         
-    if not valid_indices: return [], ai_message
-    
-    # 候補データのベクトル抽出
-    target_vectors = models["vectors"][valid_indices]
-    candidate_items = [models["db"][i] for i in valid_indices]
-
-    # ★ ランキングロジック分岐 (検証用 B/Dモード)
-    if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
-        # MMR (多様性重視)
-        # diversity=0.4 くらいがバランス良し
-        results, raw_scores = mmr_sort(query_vec, target_vectors, candidate_items, top_k=12, diversity=0.4)
-    else:
-        # 既存 (単純な類似度順)
-        scores = util.cos_sim(query_vec, target_vectors)[0]
-        sorted_args = torch.argsort(scores, descending=True)
+        # 4. フィルタリング
+        valid_indices = []
+        for i, item in enumerate(models["db"]):
+            if search_genres and item.get('genre') not in search_genres: continue
+            if not (min_p <= item['price'] <= max_p): continue
+            valid_indices.append(i)
+            
+        if not valid_indices: return [], ai_message
         
-        results = []
-        raw_scores = []
-        for i in range(min(12, len(sorted_args))):
-            idx = sorted_args[i].item()
-            results.append(candidate_items[idx])
-            raw_scores.append(scores[idx].item())
+        target_vectors = models["vectors"][valid_indices]
+        candidate_items = [models["db"][i] for i in valid_indices]
 
-    # 結果データの整形 (スコア付与など)
-    final_results = []
-    for item, raw_score in zip(results, raw_scores):
-        # visualモードまたはモデルなしなら係数高め
-        display_score = min(raw_score * 5.0, 0.99) if (mode == "visual" or not models["has_logic_model"]) else min(raw_score * 3.5, 0.99)
-        item['match_score'] = display_score
-        final_results.append(item)
-        
-    return final_results, ai_message
+        # ★★★ 診断ログ (DEBUG_MODE=Trueのみ表示) ★★★
+        if DEBUG_MODE:
+            st.markdown("#### 🕵️ データ診断")
+            st.write(f"Query Shape: {query_vec.shape}, Type: {query_vec.dtype}")
+            st.write(f"Target Shape: {target_vectors.shape}, Type: {target_vectors.dtype}")
+
+        # 5. ランキング計算
+        if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
+            # MMR (多様性重視)
+            results, raw_scores = mmr_sort(query_vec, target_vectors, candidate_items, top_k=12, diversity=0.4)
+        else:
+            # Baseline (既存)
+            q_tensor = torch.tensor(query_vec).float().cpu()
+            t_tensor = torch.tensor(target_vectors).float().cpu()
+            
+            scores = util.cos_sim(q_tensor, t_tensor)[0]
+            sorted_args = torch.argsort(scores, descending=True)
+            
+            results = []
+            raw_scores = []
+            for i in range(min(12, len(sorted_args))):
+                idx = sorted_args[i].item()
+                results.append(candidate_items[idx])
+                raw_scores.append(scores[idx].item())
+
+        # 結果の整形
+        final_results = []
+        for item, raw_score in zip(results, raw_scores):
+            display_score = min(raw_score * 5.0, 0.99) if (mode == "visual" or not models["has_logic_model"]) else min(raw_score * 3.5, 0.99)
+            item['match_score'] = display_score
+            final_results.append(item)
+            
+        return final_results, ai_message
+
+    except Exception as e:
+        # ★ エラーが起きたら赤枠で詳細を表示
+        st.error(f"🚨 システムエラー発生: {e}")
+        st.code(traceback.format_exc()) # プログラマ向けの詳細ログ
+        return [], "システムエラー"
 
 # --- UI構築 ---
 st.title(f"🍾 {APP_TITLE}")
@@ -329,7 +336,7 @@ st.sidebar.header("Filters")
 user_genres = st.sidebar.multiselect("ジャンル固定", options=models["genres"])
 price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="¥%d")
 
-# ★★★ 検証用メニュー (ここを追加！) ★★★
+# ★★★ 検証用メニュー ★★★
 st.sidebar.divider()
 st.sidebar.markdown("### 🧪 開発者メニュー")
 logic_mode = st.sidebar.selectbox(
@@ -342,7 +349,6 @@ logic_mode = st.sidebar.selectbox(
     ],
     index=0
 )
-# ★★★★★★★★★★★★★★★★★★★★★★★★
 
 if DEBUG_MODE: st.sidebar.warning("🔧 デバッグモード ON")
 
@@ -356,12 +362,10 @@ with col2:
 
 if query or search_btn:
     if search_btn:
-        # GA送信 (A/Bテスト用にLogicモードも一緒に送ると分析しやすいかも)
         components.html(f"<script>gtag('event', 'search', {{'search_term': '{query}', 'logic_mode': '{logic_mode}'}});</script>", height=0)
 
     st.divider()
     
-    # 検索実行 (logic_modeを渡す)
     results, message = search_engine(query, user_genres, price_range[0], price_range[1], mode=mode_key, logic_mode=logic_mode)
     
     if message: st.caption(message)
@@ -393,4 +397,6 @@ if query or search_btn:
 
                     st.link_button("楽天で見る ➤", item['url'], use_container_width=True)
     else:
-        st.warning("Not found... 条件を変えてDigり直してください💿")
+        # エラー表示済みでなければ「Not Found」
+        if not message == "システムエラー":
+            st.warning("Not found... 条件を変えてDigり直してください💿")
