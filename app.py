@@ -6,11 +6,11 @@ import torch
 from sentence_transformers import SentenceTransformer, util
 from transformers import BertTokenizer, BertForSequenceClassification
 import torch.nn.functional as F
-import os # ファイル存在確認用
+import os 
 
 # ==========================================
 # ★Google Analytics設定
-# ==========================================
+# ==========================================F
 def inject_ga():
     Gif "GA_ID" in st.secrets:
         GA_ID = st.secrets["GA_ID"]
@@ -47,9 +47,13 @@ inject_ga()
 
 st.markdown("""
 <style>
+    /* 画像サイズの調整 */
     div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
-    div[data-testid="stVerticalBlockBorderWrapper"] { height: 100%; }
-    .stProgress > div > div > div > div { background-color: #f63366; }
+        
+    /* ★ハンバーガーメニューとフッターを隠す */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
