@@ -9,14 +9,14 @@ import torch.nn.functional as F
 import os
 import traceback
 import gc
-import time # プログレスバーの演出用
+import time 
 
 # ==========================================
 # ★設定エリア
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 0.2.3 (Progress)" # バージョン更新
+APP_VERSION = "ver 0.2.4 (Spinner)" # ★バージョン更新
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -160,12 +160,11 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
         st.error(f"MMR Error: {e}")
         return [], []
 
-# --- 検索エンジン本体 (プログレスバー対応版) ---
+# --- 検索エンジン本体 ---
 def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", logic_mode="A", progress_bar=None, status_text=None):
     ai_message = ""
     search_genres = []
     
-    # 進行状況 10%
     if progress_bar: progress_bar.progress(10)
     if status_text: status_text.text("🤔 キーワードを解析中...")
     
@@ -175,28 +174,23 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         else:
             query_for_clip = original_query
 
-        # 進行状況 30%
         if progress_bar: progress_bar.progress(30)
         if status_text: status_text.text("🎨 イメージをベクトルに変換中...")
 
         if selected_genres:
             search_genres = selected_genres
         elif mode == "logic" and models["has_logic_model"]:
-            # Logic省略...
             pass
         elif mode == "visual" or not models["has_logic_model"]:
             search_genres = [] 
             ai_message = ""
 
-        # クエリのベクトル化
         query_vec = models["clip"].encode(query_for_clip, convert_to_tensor=True).float().cpu().numpy()
         if query_vec.ndim == 1: query_vec = query_vec[None, :] 
         
-        # 進行状況 50%
         if progress_bar: progress_bar.progress(50)
         if status_text: status_text.text("🍷 データベースから候補を抽出中...")
 
-        # フィルタリング
         valid_indices = []
         for i, item in enumerate(models["db"]):
             if search_genres and item.get('genre') not in search_genres: continue
@@ -209,11 +203,9 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         target_vectors_tensor = models["vectors"][valid_indices]
         candidate_items = [models["db"][i] for i in valid_indices]
 
-        # 進行状況 70%
         if progress_bar: progress_bar.progress(70)
         if status_text: status_text.text(f"🚀 {len(candidate_items)}件の中からベストマッチを選定中...")
 
-        # ランキング計算
         if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
             results, raw_scores = mmr_sort(query_vec, target_vectors_tensor, candidate_items, top_k=12, diversity=0.4)
         else:
@@ -228,10 +220,9 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
                 results.append(candidate_items[idx])
                 raw_scores.append(scores[idx].item())
 
-        # 進行状況 100%
         if progress_bar: progress_bar.progress(100)
         if status_text: status_text.text("✨ 完了！")
-        time.sleep(0.5) # ちょっとだけ100%を見せる
+        time.sleep(0.5) 
 
         final_results = []
         for item, raw_score in zip(results, raw_scores):
@@ -280,14 +271,15 @@ with col2:
 if query or search_btn:
     st.divider()
     
-    # ★プログレスバーのコンテナ作成
+    # プログレスバーの場所
     status_text = st.empty()
     progress_bar = st.progress(0)
     
-    # 検索実行（バーの部品を渡す）
-    results, message = search_engine(query, user_genres, price_range[0], price_range[1], mode=mode_key, logic_mode=logic_mode, progress_bar=progress_bar, status_text=status_text)
+    # ★ここです！ spinner で包んで「ぐるぐる」を出す
+    with st.spinner('AIが脳みそフル回転中...'):
+        results, message = search_engine(query, user_genres, price_range[0], price_range[1], mode=mode_key, logic_mode=logic_mode, progress_bar=progress_bar, status_text=status_text)
     
-    # 処理が終わったらバーを消す
+    # 終わったらバーを消す
     time.sleep(0.2)
     progress_bar.empty()
     status_text.empty()
