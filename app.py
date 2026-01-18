@@ -48,16 +48,16 @@ inject_ga()
 st.markdown("""
 <style>
     /* 1. ヘッダー（上のバー）は「表示」させる！ */
-    /* ここを消すとフィルターボタン（＞）が押せなくなる */
+    /* これがないとフィルターボタン（＞）が消えてしまいます */
     header {
         visibility: visible !important;
-        background-color: transparent !important; /* 背景を透明にして圧迫感を減らす */
+        background-color: transparent !important;
     }
     
-    /* 2. フッター（Built with Streamlit）だけ消す */
+    /* 2. 通常のフッターを消す */
     footer {
-        visibility: hidden;
-        display: none;
+        visibility: hidden !important;
+        display: none !important;
     }
     
     /* 3. 虹色の線だけ消す */
@@ -66,7 +66,17 @@ st.markdown("""
         display: none;
     }
 
-    /* 4. 画像サイズの調整（既存） */
+    /* ★4. Streamlit Cloud特有の「白枠（ViewerBadge）」を強制的に消す */
+    /* クラス名の一部（viewerBadge）を含む要素をすべて消します */
+    div[class*="viewerBadge"] {
+        visibility: hidden !important;
+        display: none !important;
+    }
+    .viewerBadge_container__1QSob {
+        display: none !important;
+    }
+
+    /* 画像サイズの調整（既存） */
     div[data-testid="stImage"] img { height: 200px; object-fit: contain; width: 100%; }
 </style>
 """, unsafe_allow_html=True)
