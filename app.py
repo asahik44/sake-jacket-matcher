@@ -167,21 +167,23 @@ def predict_genre_probs(text):
     probs = F.softmax(outputs.logits, dim=-1)[0]
     return {models["genre_md"].config.id2label[i]: prob.item() for i, prob in enumerate(probs)}
 
-# ★ MMR並び替えロジック (頑丈版)
+# ==========================================
+# ★ここから下をコピーして上書きしてください
+# ==========================================
+
+# ★ MMR並び替えロジック (2次元強制版)
 def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=0.4):
-    """
-    diversity: 0に近いほど類似度重視、1に近いほど多様性重視
-    """
-    # ★強制的にfloat32型・CPU・Tensorに変換してエラーを防ぐ
+    # 強制的に (1, 512) の形にする
     query_tensor = torch.tensor(query_vec).float().cpu()
-    # 1次元配列なら2次元(1, 512)にする
     if query_tensor.dim() == 1:
-        query_tensor = query_tensor.unsqueeze(0)
+        query_tensor = query_tensor.unsqueeze(0) # (512,) -> (1, 512)
         
     cand_tensor = torch.tensor(candidate_vectors).float().cpu()
     
-    # 類似度計算
-    sims_to_query = util.cos_sim(query_tensor, cand_tensor)[0]
+    # 類似度計算 (結果は (1, N) になる)
+    sims_to_query = util.cos_sim(query_tensor, cand_tensor)
+    # [0]をつけることで (N,) の形（スコアのリスト）を取り出す
+    sims_to_query = sims_to_query[0]
     
     selected_indices = []
     candidate_indices = list(range(len(candidate_items)))
@@ -219,13 +221,13 @@ def mmr_sort(query_vec, candidate_vectors, candidate_items, top_k=12, diversity=
     
     return results, result_scores
 
-# --- 検索エンジン本体 (診断機能・エラー表示付き) ---
+# --- 検索エンジン本体 (修正版) ---
 def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", logic_mode="A"):
     ai_message = ""
     search_genres = []
     
     try:
-        # 1. プロンプトエンジニアリング (C, D)
+        # 1. プロンプトエンジニアリング
         if mode == "visual" and ("C" in logic_mode or "D" in logic_mode):
             query_for_clip = f"「{original_query}」という雰囲気のお酒のボトルデザイン。 Package design of sake bottle with the vibe of {original_query}."
         else:
@@ -262,8 +264,11 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
             search_genres = [] 
             ai_message = ""
 
-        # 3. ベクトル化 (★float32に強制変換)
+        # 3. ベクトル化 & ★強制2次元化★
+        # ここで必ず (1, 512) の形にします。これが全ての解決策です。
         query_vec = models["clip"].encode(query_for_clip, convert_to_tensor=True).float().cpu().numpy()
+        if query_vec.ndim == 1:
+            query_vec = query_vec[None, :] # (512,) -> (1, 512) に変換
         
         # 4. フィルタリング
         valid_indices = []
@@ -277,22 +282,20 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         target_vectors = models["vectors"][valid_indices]
         candidate_items = [models["db"][i] for i in valid_indices]
 
-        # ★★★ 診断ログ (DEBUG_MODE=Trueのみ表示) ★★★
-        if DEBUG_MODE:
-            st.markdown("#### 🕵️ データ診断")
-            st.write(f"Query Shape: {query_vec.shape}, Type: {query_vec.dtype}")
-            st.write(f"Target Shape: {target_vectors.shape}, Type: {target_vectors.dtype}")
-
         # 5. ランキング計算
         if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
             # MMR (多様性重視)
             results, raw_scores = mmr_sort(query_vec, target_vectors, candidate_items, top_k=12, diversity=0.4)
         else:
             # Baseline (既存)
-            q_tensor = torch.tensor(query_vec).float().cpu()
-            t_tensor = torch.tensor(target_vectors).float().cpu()
+            q_tensor = torch.tensor(query_vec).float().cpu() # (1, 512)
+            t_tensor = torch.tensor(target_vectors).float().cpu() # (N, 512)
             
-            scores = util.cos_sim(q_tensor, t_tensor)[0]
+            # cos_simの結果は (1, N) になる
+            scores = util.cos_sim(q_tensor, t_tensor)
+            # [0] で (N,) のスコアリストを取り出す（これが正解！）
+            scores = scores[0]
+            
             sorted_args = torch.argsort(scores, descending=True)
             
             results = []
@@ -312,9 +315,8 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         return final_results, ai_message
 
     except Exception as e:
-        # ★ エラーが起きたら赤枠で詳細を表示
         st.error(f"🚨 システムエラー発生: {e}")
-        st.code(traceback.format_exc()) # プログラマ向けの詳細ログ
+        st.code(traceback.format_exc())
         return [], "システムエラー"
 
 # --- UI構築 ---
