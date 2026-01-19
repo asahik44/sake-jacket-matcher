@@ -16,7 +16,7 @@ import time
 # ==========================================
 DEBUG_MODE = False
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 1.0.1" # ★バージョン更新　Score Fix
+APP_VERSION = "ver 1.0.2" # ★バージョン更新
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -241,7 +241,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if status_text: status_text.text("✨ 完了！")
         time.sleep(0.5) 
 
-        # ★スコアの正規化ロジック (相対評価に変更)
+        # スコア正規化
         if raw_scores:
             max_s = max(raw_scores)
             min_s = min(raw_scores)
@@ -251,9 +251,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
                 normalized_scores = [0.99] * len(raw_scores)
             else:
                 for s in raw_scores:
-                    # 0.0 ~ 1.0 に正規化
                     norm = (s - min_s) / (max_s - min_s)
-                    # 0.70 ~ 0.99 にマッピング (ここで階段を作る)
                     scaled = 0.70 + (norm * 0.29)
                     normalized_scores.append(scaled)
         else:
@@ -263,6 +261,9 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         for item, score in zip(results, normalized_scores):
             item['match_score'] = score
             final_results.append(item)
+
+        # ★【追加】最後にスコアが高い順に並び替える（これで綺麗な階段になる！）
+        final_results.sort(key=lambda x: x['match_score'], reverse=True)
             
         return final_results, ai_message
 
@@ -299,7 +300,7 @@ else:
 
 col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 with col1:
-    placeholder = "例：サイバーパンクな夜..." 
+    placeholder = "例：サイバーパンクな夜,森の中で読書,初恋の味..." 
     query = st.text_input("どんな雰囲気のお酒がいい？", placeholder=placeholder).strip()
 with col2:
     search_btn = st.button("Digる", type="primary", use_container_width=True)
