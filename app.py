@@ -14,9 +14,9 @@ import time
 # ==========================================
 # ★設定エリア
 # ==========================================
-DEBUG_MODE = True  
+DEBUG_MODE = False  # ★ここをFalseにして、開発者メニューを隠す！
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 1.0.0" # ★祝！リリース
+APP_VERSION = "ver 1.0.0" 
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -32,8 +32,6 @@ st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 def inject_ga():
     try:
-        # Hugging Face Spacesでは secrets ではなく os.environ から取る場合もあるが
-        # Streamlit Templateなら st.secrets も機能する。両対応にしておく。
         if "GA_ID" in st.secrets:
             GA_ID = st.secrets["GA_ID"]
         elif "GA_ID" in os.environ:
@@ -128,10 +126,9 @@ def predict_genre_probs(text):
     probs = F.softmax(outputs.logits, dim=-1)[0]
     return {models["genre_md"].config.id2label[i]: prob.item() for i, prob in enumerate(probs)}
 
-# MMRロジック (高速化版：予選導入)
+# MMRロジック
 def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, diversity=0.4):
     try:
-        # 1. 予選：上位300件に絞る
         PRE_FILTER_K = 300 
         
         query_tensor = torch.tensor(query_vec).float().cpu()
@@ -147,7 +144,6 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
         else:
             sims_to_query = all_sims
 
-        # 2. 決勝：MMR
         selected_indices = []
         candidate_indices = list(range(len(candidate_items)))
         
@@ -226,7 +222,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if progress_bar: progress_bar.progress(70)
         if status_text: status_text.text(f"🚀 {len(candidate_items)}件の中からベストマッチを選定中...")
 
-        # ランキング計算 (B/DはMMR)
+        # ランキング計算
         if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
             results, raw_scores = mmr_sort(query_vec, target_vectors_tensor, candidate_items, top_k=12, diversity=0.4)
         else:
@@ -276,15 +272,19 @@ st.sidebar.header("Filters")
 user_genres = st.sidebar.multiselect("ジャンル固定", options=models["genres"])
 price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="¥%d")
 
-st.sidebar.divider()
-st.sidebar.markdown("### 🧪 開発者メニュー")
-logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=1) # デフォルトをBに
-
-if DEBUG_MODE: st.sidebar.warning("🔧 デバッグモード ON")
+# ★ 開発者メニューを隠す！ (DEBUG_MODE = True の時だけ表示)
+if DEBUG_MODE:
+    st.sidebar.divider()
+    st.sidebar.markdown("### 🧪 開発者メニュー")
+    logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=1)
+    st.sidebar.warning("🔧 デバッグモード ON")
+else:
+    # ユーザーにはデフォルトで「B: MMR」を使わせる
+    logic_mode = "B: MMR (多様性重視)"
 
 col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 with col1:
-    placeholder = "例：サイバーパンクな夜..." 
+    placeholder = "例：サイバーパンクな夜,森の中で読書,初恋の味..." 
     query = st.text_input("どんな雰囲気のお酒がいい？", placeholder=placeholder).strip()
 with col2:
     search_btn = st.button("Digる", type="primary", use_container_width=True)
@@ -316,11 +316,8 @@ if query or search_btn:
                         st.progress(item['match_score'], text=f"Match: {int(item['match_score']*100)}%")
                     
                     st.write(f"**{item['name'][:30]}**")
-                    
-                    # ★ここでジャンルと金額を表示！
                     price_str = f"¥{item['price']:,}"
                     st.caption(f"🏷 {item.get('genre')} | 💰 {price_str}")
-                    
                     st.link_button("楽天で見る ➤", item['url'], use_container_width=True)
     else:
         if message != "システムエラー":
