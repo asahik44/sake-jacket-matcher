@@ -16,7 +16,7 @@ import time
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 0.2.5 (高速化版：予選導入)" # ★バージョン更新
+APP_VERSION = "ver 0.2.6 (高速化版：予選導入-予選通過300に変更)" # ★バージョン更新
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -126,7 +126,7 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
     try:
         # 1. 予選：まずは単純な類似度で上位N件だけを候補に残す
         # これをやらないと全件(6000件)に対してループが回り遅くなる
-        PRE_FILTER_K = 100 
+        PRE_FILTER_K = 300 
         
         query_tensor = torch.tensor(query_vec).float().cpu()
         if query_tensor.dim() == 1: query_tensor = query_tensor.unsqueeze(0)
