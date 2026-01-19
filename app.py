@@ -16,7 +16,7 @@ import time
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 0.2.6 (高速化版：予選導入-予選通過300に変更)" # ★バージョン更新
+APP_VERSION = "ver 1.0.0" # ★祝！リリース
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -32,10 +32,17 @@ st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 def inject_ga():
     try:
+        # Hugging Face Spacesでは secrets ではなく os.environ から取る場合もあるが
+        # Streamlit Templateなら st.secrets も機能する。両対応にしておく。
         if "GA_ID" in st.secrets:
             GA_ID = st.secrets["GA_ID"]
-            ga_code = f"""<script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){{dataLayer.push(arguments);}}gtag('js', new Date());gtag('config', '{GA_ID}');</script>"""
-            components.html(ga_code, height=0)
+        elif "GA_ID" in os.environ:
+            GA_ID = os.environ["GA_ID"]
+        else:
+            return
+
+        ga_code = f"""<script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){{dataLayer.push(arguments);}}gtag('js', new Date());gtag('config', '{GA_ID}');</script>"""
+        components.html(ga_code, height=0)
     except Exception:
         pass
 
@@ -124,28 +131,23 @@ def predict_genre_probs(text):
 # MMRロジック (高速化版：予選導入)
 def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, diversity=0.4):
     try:
-        # 1. 予選：まずは単純な類似度で上位N件だけを候補に残す
-        # これをやらないと全件(6000件)に対してループが回り遅くなる
+        # 1. 予選：上位300件に絞る
         PRE_FILTER_K = 300 
         
         query_tensor = torch.tensor(query_vec).float().cpu()
         if query_tensor.dim() == 1: query_tensor = query_tensor.unsqueeze(0)
         
-        # 全件との類似度計算 (ここは一瞬)
         all_sims = util.cos_sim(query_tensor, candidate_vectors_tensor)[0]
         
-        # 上位N件のインデックスを取得
         if len(candidate_items) > PRE_FILTER_K:
             top_indices = torch.argsort(all_sims, descending=True)[:PRE_FILTER_K]
-            # 候補を絞り込む
             candidate_vectors_tensor = candidate_vectors_tensor[top_indices]
             candidate_items = [candidate_items[i] for i in top_indices.tolist()]
-            # 類似度スコアも絞り込んだものに更新
             sims_to_query = all_sims[top_indices]
         else:
             sims_to_query = all_sims
 
-        # 2. 決勝：絞り込んだ候補の中だけでMMRを回す (爆速)
+        # 2. 決勝：MMR
         selected_indices = []
         candidate_indices = list(range(len(candidate_items)))
         
@@ -157,7 +159,6 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
                 similarity_to_query = sims_to_query[idx].item()
                 
                 if selected_indices:
-                    # 選ばれたものとの類似度 (ここが重かったが、件数が減ったので速い)
                     selected_vecs = candidate_vectors_tensor[selected_indices]
                     current_vec = candidate_vectors_tensor[idx].unsqueeze(0)
                     sim_to_selected = util.cos_sim(current_vec, selected_vecs)
@@ -175,7 +176,6 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
             candidate_indices.remove(best_idx)
             
         return [candidate_items[i] for i in selected_indices], [sims_to_query[i].item() for i in selected_indices]
-
     except Exception as e:
         st.error(f"MMR Error: {e}")
         return [], []
@@ -226,6 +226,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if progress_bar: progress_bar.progress(70)
         if status_text: status_text.text(f"🚀 {len(candidate_items)}件の中からベストマッチを選定中...")
 
+        # ランキング計算 (B/DはMMR)
         if mode == "visual" and ("B" in logic_mode or "D" in logic_mode):
             results, raw_scores = mmr_sort(query_vec, target_vectors_tensor, candidate_items, top_k=12, diversity=0.4)
         else:
@@ -259,7 +260,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
 
 # --- UI構築 ---
 st.title(f"🍾 {APP_TITLE}")
-st.caption(f"Updated: {APP_VERSION}") 
+st.caption(f"Released: {APP_VERSION}") 
 
 st.sidebar.header("Search Mode")
 
@@ -277,7 +278,7 @@ price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="
 
 st.sidebar.divider()
 st.sidebar.markdown("### 🧪 開発者メニュー")
-logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=0)
+logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=1) # デフォルトをBに
 
 if DEBUG_MODE: st.sidebar.warning("🔧 デバッグモード ON")
 
@@ -291,15 +292,12 @@ with col2:
 if query or search_btn:
     st.divider()
     
-    # プログレスバーの場所
     status_text = st.empty()
     progress_bar = st.progress(0)
     
-    # ★ここです！ spinner で包んで「ぐるぐる」を出す
     with st.spinner('AIが脳みそフル回転中...'):
         results, message = search_engine(query, user_genres, price_range[0], price_range[1], mode=mode_key, logic_mode=logic_mode, progress_bar=progress_bar, status_text=status_text)
     
-    # 終わったらバーを消す
     time.sleep(0.2)
     progress_bar.empty()
     status_text.empty()
@@ -313,9 +311,16 @@ if query or search_btn:
                 with st.container(height=450, border=True): 
                     if item.get('image_url'): st.image(item['image_url'], use_container_width=True)
                     else: st.text("No Image")
+                    
                     if mode_key == "visual":
                         st.progress(item['match_score'], text=f"Match: {int(item['match_score']*100)}%")
+                    
                     st.write(f"**{item['name'][:30]}**")
+                    
+                    # ★ここでジャンルと金額を表示！
+                    price_str = f"¥{item['price']:,}"
+                    st.caption(f"🏷 {item.get('genre')} | 💰 {price_str}")
+                    
                     st.link_button("楽天で見る ➤", item['url'], use_container_width=True)
     else:
         if message != "システムエラー":
