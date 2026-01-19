@@ -23,12 +23,15 @@ GENRE_ORDER = [
     "ビール", "海外ビール", "地ビール・クラフトビール",
     "ウイスキー", "ワイン", "赤ワイン", "白ワイン", "スパークリングワイン", "シャンパン",
     "日本酒", "焼酎", "芋焼酎", "麦焼酎", "米焼酎",
-    "サワーの素・割材", "リキュール", "ジン・クラフトジン", "梅酒",
-    "ノンアルコール"
+    "リキュール", "ジン・クラフトジン", "梅酒",
+    "ノンアルコール","サワーの素・割材"
 ]
 
-st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.sidebar.caption(f"App Version: {APP_VERSION}")
+st.set_page_config(
+    page_title="Sake Jacket Matcher | AIで直感的にジャケ買い", 
+    layout="wide",
+    page_icon="https://sake-jaket.herahin.net/sake_favicon.png"  # 好きな絵文字、または画像ファイルのパスを指定
+)st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 def inject_ga():
     try:
