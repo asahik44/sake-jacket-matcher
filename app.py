@@ -16,7 +16,7 @@ import time
 # ==========================================
 DEBUG_MODE = False
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 1.0.2" # ★バージョン更新
+APP_VERSION = "ver 1.0.4" # ★バージョン更新 検索ワード検知機能追加
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -30,8 +30,9 @@ GENRE_ORDER = [
 st.set_page_config(
     page_title="Sake Jacket Matcher | AIで直感的にジャケ買い", 
     layout="wide",
-    page_icon="https://sake-jaket.herahin.net/sake_favicon.png"  # 好きな絵文字、または画像ファイルのパスを指定
-)st.sidebar.caption(f"App Version: {APP_VERSION}")
+    page_icon="https://sake-jaket.herahin.net/sake_favicon.png"
+)
+st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 def inject_ga():
     try:
@@ -265,7 +266,7 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
             item['match_score'] = score
             final_results.append(item)
 
-        # ★【追加】最後にスコアが高い順に並び替える（これで綺麗な階段になる！）
+        # ★最後にスコアが高い順に並び替える
         final_results.sort(key=lambda x: x['match_score'], reverse=True)
             
         return final_results, ai_message
@@ -309,6 +310,9 @@ with col2:
     search_btn = st.button("Digる", type="primary", use_container_width=True)
 
 if query or search_btn:
+    # ★URLに検索ワードを記録する
+    st.query_params.from_dict({"q": query})
+
     st.divider()
     
     status_text = st.empty()
