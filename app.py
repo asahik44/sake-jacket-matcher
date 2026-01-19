@@ -16,7 +16,7 @@ import time
 # ==========================================
 DEBUG_MODE = True  
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 0.2.4 (Spinner)" # ★バージョン更新
+APP_VERSION = "ver 0.2.5 (高速化版：予選導入)" # ★バージョン更新
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -121,26 +121,43 @@ def predict_genre_probs(text):
     probs = F.softmax(outputs.logits, dim=-1)[0]
     return {models["genre_md"].config.id2label[i]: prob.item() for i, prob in enumerate(probs)}
 
+# MMRロジック (高速化版：予選導入)
 def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, diversity=0.4):
     try:
+        # 1. 予選：まずは単純な類似度で上位N件だけを候補に残す
+        # これをやらないと全件(6000件)に対してループが回り遅くなる
+        PRE_FILTER_K = 100 
+        
         query_tensor = torch.tensor(query_vec).float().cpu()
         if query_tensor.dim() == 1: query_tensor = query_tensor.unsqueeze(0)
         
-        sims_to_query = util.cos_sim(query_tensor, candidate_vectors_tensor)[0]
+        # 全件との類似度計算 (ここは一瞬)
+        all_sims = util.cos_sim(query_tensor, candidate_vectors_tensor)[0]
         
+        # 上位N件のインデックスを取得
+        if len(candidate_items) > PRE_FILTER_K:
+            top_indices = torch.argsort(all_sims, descending=True)[:PRE_FILTER_K]
+            # 候補を絞り込む
+            candidate_vectors_tensor = candidate_vectors_tensor[top_indices]
+            candidate_items = [candidate_items[i] for i in top_indices.tolist()]
+            # 類似度スコアも絞り込んだものに更新
+            sims_to_query = all_sims[top_indices]
+        else:
+            sims_to_query = all_sims
+
+        # 2. 決勝：絞り込んだ候補の中だけでMMRを回す (爆速)
         selected_indices = []
         candidate_indices = list(range(len(candidate_items)))
         
-        if len(candidate_items) <= top_k:
-            sorted_indices = torch.argsort(sims_to_query, descending=True).tolist()
-            return [candidate_items[i] for i in sorted_indices], [sims_to_query[i].item() for i in sorted_indices]
-
         for _ in range(min(len(candidate_items), top_k)):
             best_mmr_score = -float('inf')
             best_idx = -1
+            
             for idx in candidate_indices:
                 similarity_to_query = sims_to_query[idx].item()
+                
                 if selected_indices:
+                    # 選ばれたものとの類似度 (ここが重かったが、件数が減ったので速い)
                     selected_vecs = candidate_vectors_tensor[selected_indices]
                     current_vec = candidate_vectors_tensor[idx].unsqueeze(0)
                     sim_to_selected = util.cos_sim(current_vec, selected_vecs)
@@ -149,13 +166,16 @@ def mmr_sort(query_vec, candidate_vectors_tensor, candidate_items, top_k=12, div
                     max_similarity_to_selected = 0
                 
                 mmr_score = (1 - diversity) * similarity_to_query - diversity * max_similarity_to_selected
+                
                 if mmr_score > best_mmr_score:
                     best_mmr_score = mmr_score
                     best_idx = idx
+            
             selected_indices.append(best_idx)
             candidate_indices.remove(best_idx)
             
         return [candidate_items[i] for i in selected_indices], [sims_to_query[i].item() for i in selected_indices]
+
     except Exception as e:
         st.error(f"MMR Error: {e}")
         return [], []
