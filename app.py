@@ -14,9 +14,9 @@ import time
 # ==========================================
 # ★設定エリア
 # ==========================================
-DEBUG_MODE = False  # ★ここをFalseにして、開発者メニューを隠す！
+DEBUG_MODE = False
 APP_TITLE = "Sake Jacket Matcher"
-APP_VERSION = "ver 1.0.0" 
+APP_VERSION = "ver 1.0.1" # ★バージョン更新　Score Fix
 USE_LOGIC_MODEL = False
 
 GENRE_ORDER = [
@@ -241,10 +241,27 @@ def search_engine(original_query, selected_genres, min_p, max_p, mode="visual", 
         if status_text: status_text.text("✨ 完了！")
         time.sleep(0.5) 
 
+        # ★スコアの正規化ロジック (相対評価に変更)
+        if raw_scores:
+            max_s = max(raw_scores)
+            min_s = min(raw_scores)
+            normalized_scores = []
+            
+            if max_s == min_s:
+                normalized_scores = [0.99] * len(raw_scores)
+            else:
+                for s in raw_scores:
+                    # 0.0 ~ 1.0 に正規化
+                    norm = (s - min_s) / (max_s - min_s)
+                    # 0.70 ~ 0.99 にマッピング (ここで階段を作る)
+                    scaled = 0.70 + (norm * 0.29)
+                    normalized_scores.append(scaled)
+        else:
+            normalized_scores = []
+
         final_results = []
-        for item, raw_score in zip(results, raw_scores):
-            display_score = min(raw_score * 5.0, 0.99)
-            item['match_score'] = display_score
+        for item, score in zip(results, normalized_scores):
+            item['match_score'] = score
             final_results.append(item)
             
         return final_results, ai_message
@@ -272,19 +289,17 @@ st.sidebar.header("Filters")
 user_genres = st.sidebar.multiselect("ジャンル固定", options=models["genres"])
 price_range = st.sidebar.slider("価格帯", 0, 30000, (0, 30000), 500, format="¥%d")
 
-# ★ 開発者メニューを隠す！ (DEBUG_MODE = True の時だけ表示)
 if DEBUG_MODE:
     st.sidebar.divider()
     st.sidebar.markdown("### 🧪 開発者メニュー")
     logic_mode = st.sidebar.selectbox("検索アルゴリズム検証", ["A: 通常 (Baseline)", "B: MMR (多様性重視)", "C: Prompt (言葉を補正)", "D: MMR + Prompt (最強?)"], index=1)
     st.sidebar.warning("🔧 デバッグモード ON")
 else:
-    # ユーザーにはデフォルトで「B: MMR」を使わせる
     logic_mode = "B: MMR (多様性重視)"
 
 col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 with col1:
-    placeholder = "例：サイバーパンクな夜,森の中で読書,初恋の味..." 
+    placeholder = "例：サイバーパンクな夜..." 
     query = st.text_input("どんな雰囲気のお酒がいい？", placeholder=placeholder).strip()
 with col2:
     search_btn = st.button("Digる", type="primary", use_container_width=True)
